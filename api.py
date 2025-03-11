@@ -147,25 +147,29 @@ async def run_sql_query(query_request: SQLQueryRequest):
 @app.post("/ai/sql-query")
 async def ai_sql_query(query_request: SQLQueryRequest):
     """
-    API endpoint สำหรับให้ AI สร้างและรันคำสั่ง SQL จากคำถามภาษาธรรมชาติ
+    สร้างและรันคำสั่ง SQL จากคำถามภาษาธรรมชาติ
     """
     try:
         # ดึงโครงสร้างฐานข้อมูล
-        db_schema = get_database_schema()
+        schema = get_database_schema()
+        if not schema:
+            raise HTTPException(status_code=500, detail="ไม่สามารถดึงโครงสร้างฐานข้อมูลได้")
+            
+        # ดึงประเภทฐานข้อมูลปัจจุบัน
+        db_type = db_manager.db_type
+        logger.info(f"ประเภทฐานข้อมูลที่ใช้: {db_type}")
         
-        # ให้ AI สร้างคำสั่ง SQL
-        sql_query = openai_service.generate_sql_from_question(query_request.question, db_schema)
-        
-        # ตรวจสอบว่าคำสั่ง SQL ถูกสร้างขึ้นหรือไม่
-        if sql_query.startswith("เกิดข้อผิดพลาด"):
-            return {"error": sql_query}
+        # สร้างคำสั่ง SQL
+        openai_service = OpenAIService()
+        sql_query = await openai_service.generate_sql_from_question(query_request.question, schema, db_type)
         
         # รันคำสั่ง SQL
         result = execute_sql_query(sql_query)
         
-        # ให้ AI วิเคราะห์ผลลัพธ์
-        analysis = openai_service.analyze_sql_result(query_request.question, sql_query, result)
+        # วิเคราะห์ผลลัพธ์
+        analysis = await openai_service.analyze_sql_result(query_request.question, sql_query, result, db_type)
         
+        # ส่งผลลัพธ์กลับไปยังผู้ใช้
         return {
             "question": query_request.question,
             "sql_query": sql_query,
@@ -174,7 +178,7 @@ async def ai_sql_query(query_request: SQLQueryRequest):
         }
     except Exception as e:
         logger.error(f"เกิดข้อผิดพลาดในการสร้างและรันคำสั่ง SQL: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"เกิดข้อผิดพลาด: {str(e)}")
 
 @app.get("/stream-chat")
 async def stream_chat(message: str):
@@ -330,129 +334,100 @@ async def stream_ask_ai(ask_request: AskAIRequest):
 @app.post("/stream/sql-query")
 async def stream_sql_query(query_request: SQLQueryRequest):
     """
-    API endpoint สำหรับการสร้างและรันคำสั่ง SQL แบบ streaming
+    สร้างและรันคำสั่ง SQL จากคำถามภาษาธรรมชาติ และส่งผลลัพธ์แบบ streaming
     """
+    question = query_request.question
+    logger.info(f"คำถาม SQL: {question}")
+    
     async def generate():
         try:
             # ดึงโครงสร้างฐานข้อมูล
-            logger.info(f"กำลังดึงโครงสร้างฐานข้อมูลสำหรับคำถาม: {query_request.question}")
-            db_schema = get_database_schema()
-            
-            # ใช้ asyncio.Queue เพื่อรับข้อความจาก callback
-            queue = asyncio.Queue()
-            loop = asyncio.get_running_loop()
-            
-            # สร้าง callback function
-            def callback(content):
-                if content is None:
-                    logger.info("ได้รับสัญญาณสิ้นสุดการส่งข้อมูล")
-                elif content == "":
-                    logger.info("ได้รับสัญญาณเริ่มต้นการส่งข้อมูล")
-                else:
-                    logger.info(f"ได้รับการวิเคราะห์: {content[:50]}...")  # ล็อกเพื่อตรวจสอบ
-                asyncio.run_coroutine_threadsafe(queue.put(content), loop)
-            
-            # ส่งข้อความแจ้งสถานะ
-            yield f"data: {custom_json_dumps({'status': 'generating_sql'})}\n\n"
-            
-            # ให้ AI สร้างคำสั่ง SQL
-            logger.info(f"กำลังสร้างคำสั่ง SQL สำหรับคำถาม: {query_request.question}")
-            sql_query = await asyncio.to_thread(
-                openai_service.generate_sql_from_question,
-                query_request.question,
-                db_schema
-            )
-            
-            logger.info(f"สร้างคำสั่ง SQL: {sql_query}")  # ล็อกคำสั่ง SQL
-            
-            # ตรวจสอบว่าคำสั่ง SQL ถูกสร้างขึ้นหรือไม่
-            if sql_query.startswith("เกิดข้อผิดพลาด"):
-                logger.error(f"เกิดข้อผิดพลาดในการสร้างคำสั่ง SQL: {sql_query}")
-                yield f"data: {custom_json_dumps({'error': sql_query})}\n\n"
+            schema = get_database_schema()
+            if not schema:
+                yield f"data: {json.dumps({'error': 'ไม่สามารถดึงโครงสร้างฐานข้อมูลได้'}, ensure_ascii=False)}\n\n"
                 return
+                
+            # ดึงประเภทฐานข้อมูลปัจจุบัน
+            db_type = db_manager.db_type
+            logger.info(f"ประเภทฐานข้อมูลที่ใช้: {db_type}")
+            
+            # แจ้งสถานะการสร้าง SQL
+            yield f"data: {json.dumps({'status': 'generating_sql'}, ensure_ascii=False)}\n\n"
+            
+            # สร้างคำสั่ง SQL
+            openai_service = OpenAIService()
+            sql_query = await openai_service.generate_sql_from_question(question, schema, db_type)
             
             # ส่งคำสั่ง SQL กลับไปยังผู้ใช้
-            yield f"data: {custom_json_dumps({'sql_query': sql_query})}\n\n"
+            yield f"data: {json.dumps({'sql_query': sql_query}, ensure_ascii=False)}\n\n"
             
-            # ส่งข้อความแจ้งสถานะ
-            yield f"data: {custom_json_dumps({'status': 'executing_sql'})}\n\n"
+            # แจ้งสถานะการรันคำสั่ง SQL
+            yield f"data: {json.dumps({'status': 'executing_sql'}, ensure_ascii=False)}\n\n"
             
             # รันคำสั่ง SQL
             try:
-                logger.info(f"กำลังรันคำสั่ง SQL: {sql_query}")
                 result = execute_sql_query(sql_query)
-                if isinstance(result, list) and len(result) > 0:
-                    logger.info(f"ผลลัพธ์ SQL: {str(result)[:100]}...")  # ล็อกผลลัพธ์
-                else:
-                    logger.warning(f"ผลลัพธ์ SQL เป็นค่าว่างหรือไม่ใช่รูปแบบที่คาดหวัง: {str(result)}")
                 
                 # ส่งผลลัพธ์กลับไปยังผู้ใช้
-                yield f"data: {custom_json_dumps({'result': result})}\n\n"
+                yield f"data: {json.dumps({'result': result}, cls=CustomJSONEncoder, ensure_ascii=False)}\n\n"
                 
-                # ส่งข้อความแจ้งสถานะ
-                yield f"data: {custom_json_dumps({'status': 'analyzing_result'})}\n\n"
+                # แจ้งสถานะการวิเคราะห์ผลลัพธ์
+                yield f"data: {json.dumps({'status': 'analyzing_result'}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'analysis_start': True}, ensure_ascii=False)}\n\n"
                 
                 # วิเคราะห์ผลลัพธ์
-                logger.info(f"เริ่มวิเคราะห์ผลลัพธ์สำหรับคำถาม: {query_request.question}")
+                def callback(content):
+                    return content
                 
-                # เรียกใช้ analyze_sql_result แบบ async
-                await asyncio.to_thread(
-                    openai_service.analyze_sql_result,
-                    query_request.question,
-                    sql_query,
-                    result,
-                    callback
+                # ใช้ asyncio.Queue เพื่อรับข้อความจาก callback
+                queue = asyncio.Queue()
+                
+                async def analysis_callback(content):
+                    await queue.put(content)
+                
+                # เริ่มการวิเคราะห์ในอีก task หนึ่ง
+                analysis_task = asyncio.create_task(
+                    openai_service.analyze_sql_result(
+                        question, sql_query, result, 
+                        callback=analysis_callback
+                    )
                 )
                 
-                # ส่งการวิเคราะห์กลับเป็น Server-Sent Events
-                content_received = False
-                timeout_count = 0
-                max_timeout_count = 60  # รอสูงสุด 60 วินาที
+                # รอรับข้อความจาก callback และส่งกลับไปยังผู้ใช้
+                timeout = 60  # เพิ่มเวลา timeout เป็น 60 วินาที
+                try:
+                    while True:
+                        try:
+                            content = await asyncio.wait_for(queue.get(), timeout=timeout)
+                            if content:
+                                yield f"data: {json.dumps({'analysis_chunk': content}, ensure_ascii=False)}\n\n"
+                            else:
+                                # ถ้าได้รับข้อความว่างให้ตรวจสอบว่า task เสร็จสิ้นแล้วหรือไม่
+                                if analysis_task.done():
+                                    break
+                        except asyncio.TimeoutError:
+                            # ถ้าเกิด timeout ให้ตรวจสอบว่า task เสร็จสิ้นแล้วหรือไม่
+                            if analysis_task.done():
+                                break
+                            else:
+                                logger.warning("เกิด timeout ในการรอข้อความจาก OpenAI API")
+                                yield f"data: {json.dumps({'analysis_error': 'เกิด timeout ในการวิเคราะห์ผลลัพธ์'}, ensure_ascii=False)}\n\n"
+                                break
+                    
+                    # แจ้งว่าการวิเคราะห์เสร็จสิ้น
+                    yield f"data: {json.dumps({'analysis_complete': True}, ensure_ascii=False)}\n\n"
+                    
+                except Exception as e:
+                    logger.error(f"เกิดข้อผิดพลาดในการวิเคราะห์ผลลัพธ์: {str(e)}")
+                    yield f"data: {json.dumps({'analysis_error': str(e)}, ensure_ascii=False)}\n\n"
                 
-                while True:
-                    try:
-                        content = await asyncio.wait_for(queue.get(), timeout=1.0)
-                        if content is None:  # สิ้นสุดการส่งข้อมูล
-                            logger.info("ได้รับสัญญาณสิ้นสุดการส่งข้อมูลการวิเคราะห์")
-                            break
-                        elif content == "":  # เริ่มต้นการส่งข้อมูล
-                            logger.info("ได้รับสัญญาณเริ่มต้นการส่งข้อมูลการวิเคราะห์")
-                            # ส่งข้อความเริ่มต้นเพื่อให้ UI รู้ว่าเริ่มการวิเคราะห์แล้ว
-                            yield f"data: {custom_json_dumps({'analysis_start': True})}\n\n"
-                            continue
-                        elif content:
-                            content_received = True
-                            logger.info(f"ส่งการวิเคราะห์กลับไปยังผู้ใช้: {content[:50]}...")  # ล็อกการส่งกลับ
-                            # ส่งข้อความแต่ละชิ้นทันทีที่ได้รับ
-                            yield f"data: {custom_json_dumps({'analysis_chunk': content})}\n\n"
-                        else:
-                            logger.warning("ได้รับข้อความว่างจาก queue")
-                    except asyncio.TimeoutError:
-                        timeout_count += 1
-                        logger.warning(f"รอการวิเคราะห์... ({timeout_count}/{max_timeout_count})")
-                        if timeout_count >= max_timeout_count:
-                            logger.warning("หมดเวลารอการวิเคราะห์")
-                            if not content_received:
-                                error_msg = 'ขออภัย ไม่สามารถวิเคราะห์ผลลัพธ์ได้ในขณะนี้ โปรดลองอีกครั้งในภายหลัง'
-                                logger.error(f"ไม่ได้รับการวิเคราะห์ภายในเวลาที่กำหนด: {error_msg}")
-                                yield f"data: {custom_json_dumps({'analysis_error': error_msg})}\n\n"
-                            break
-                
-                # ส่งสัญญาณว่าการวิเคราะห์เสร็จสิ้น
-                if content_received:
-                    yield f"data: {custom_json_dumps({'analysis_complete': True})}\n\n"
-                # ตรวจสอบว่าได้รับการวิเคราะห์หรือไม่
-                elif not content_received:
-                    logger.warning("ไม่ได้รับการวิเคราะห์จาก OpenAI API")
-                    yield f"data: {custom_json_dumps({'analysis_error': 'ขออภัย ไม่สามารถวิเคราะห์ผลลัพธ์ได้ในขณะนี้ โปรดลองอีกครั้งในภายหลัง'})}\n\n"
             except Exception as e:
-                error_message = f"เกิดข้อผิดพลาดในการรันคำสั่ง SQL หรือวิเคราะห์ผลลัพธ์: {str(e)}"
-                logger.error(error_message)
-                yield f"data: {custom_json_dumps({'error': error_message})}\n\n"
+                logger.error(f"เกิดข้อผิดพลาดในการรันคำสั่ง SQL: {str(e)}")
+                yield f"data: {json.dumps({'error': f'เกิดข้อผิดพลาดในการรันคำสั่ง SQL: {str(e)}'}, ensure_ascii=False)}\n\n"
+                
         except Exception as e:
-            error_message = f"เกิดข้อผิดพลาดในการสร้างและรันคำสั่ง SQL แบบ streaming: {str(e)}"
-            logger.error(error_message)
-            yield f"data: {custom_json_dumps({'error': error_message})}\n\n"
+            logger.error(f"เกิดข้อผิดพลาดในการสร้างคำสั่ง SQL: {str(e)}")
+            yield f"data: {json.dumps({'error': f'เกิดข้อผิดพลาดในการสร้างคำสั่ง SQL: {str(e)}'}, ensure_ascii=False)}\n\n"
     
     return StreamingResponse(generate(), media_type="text/event-stream")
 

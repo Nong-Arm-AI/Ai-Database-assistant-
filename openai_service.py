@@ -6,6 +6,7 @@ import json
 from database import get_data_as_dataframe, get_data_from_database, get_database_schema, execute_sql_query
 import httpx
 import logging
+import re
 
 # ตั้งค่าการบันทึกล็อก
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -312,179 +313,194 @@ class OpenAIService:
                 callback(error_message)
             return error_message
     
-    def generate_sql_from_question(self, question, db_schema, callback=None):
+    async def generate_sql_from_question(self, question, schema, db_type="mysql"):
         """
-        ฟังก์ชันใหม่สำหรับสร้างคำสั่ง SQL จากคำถามภาษาธรรมชาติ
+        สร้างคำสั่ง SQL จากคำถามภาษาธรรมชาติ
         
         Args:
-            question: คำถามภาษาธรรมชาติ
-            db_schema: โครงสร้างฐานข้อมูล
-            callback: ฟังก์ชันที่จะถูกเรียกเมื่อได้รับข้อความแต่ละส่วน
-        
+            question (str): คำถามภาษาธรรมชาติ
+            schema (dict): โครงสร้างฐานข้อมูล
+            db_type (str): ประเภทฐานข้อมูล (mysql, postgresql, mongodb)
+            
         Returns:
-            คำสั่ง SQL ที่สร้างขึ้น
+            str: คำสั่ง SQL ที่สร้างขึ้น
         """
-        # แปลงโครงสร้างฐานข้อมูลเป็น JSON
-        schema_json = json.dumps(db_schema, ensure_ascii=False)
-        
-        # สร้าง prompt
-        system_prompt = """คุณเป็นผู้เชี่ยวชาญในการแปลงคำถามภาษาธรรมชาติเป็นคำสั่ง SQL
-คุณจะได้รับโครงสร้างฐานข้อมูลและคำถามภาษาธรรมชาติ
-งานของคุณคือสร้างคำสั่ง SQL ที่ถูกต้องเพื่อตอบคำถามนั้น
-ตอบเฉพาะคำสั่ง SQL เท่านั้น ไม่ต้องมีคำอธิบายหรือข้อความอื่นใด
-ห้ามใช้เครื่องหมาย ``` หรือ ```sql ในคำตอบ ให้ตอบเฉพาะคำสั่ง SQL ล้วนๆ เท่านั้น"""
-        
-        user_prompt = f"""โครงสร้างฐานข้อมูล:
-{schema_json}
+        try:
+            logger.info(f"กำลังสร้างคำสั่ง SQL จากคำถาม: {question}")
+            logger.info(f"ประเภทฐานข้อมูล: {db_type}")
+            
+            if not self.client:
+                logger.error("OpenAI client ไม่ได้ถูกกำหนดค่า")
+                return "SELECT 'OpenAI client ไม่ได้ถูกกำหนดค่า' AS error"
+            
+            # สร้างคำแนะนำสำหรับแต่ละประเภทฐานข้อมูล
+            db_specific_instructions = ""
+            if db_type.lower() == "mysql":
+                db_specific_instructions = """
+                - ใช้ไวยากรณ์ SQL ที่เข้ากันได้กับ MySQL
+                - สามารถใช้ฟังก์ชันเฉพาะของ MySQL เช่น DATE_FORMAT, CONCAT_WS, GROUP_CONCAT ได้
+                - ใช้ backticks (`) สำหรับชื่อตาราง/คอลัมน์ที่เป็นคำสงวน
+                """
+            elif db_type.lower() == "postgresql":
+                db_specific_instructions = """
+                - ใช้ไวยากรณ์ SQL ที่เข้ากันได้กับ PostgreSQL
+                - สามารถใช้ฟังก์ชันเฉพาะของ PostgreSQL เช่น to_char, string_agg, array_agg ได้
+                - ใช้ double quotes (") สำหรับชื่อตาราง/คอลัมน์ที่เป็นคำสงวน
+                - ใช้ ILIKE แทน LIKE สำหรับการค้นหาแบบไม่คำนึงถึงตัวพิมพ์ใหญ่-เล็ก
+                """
+            elif db_type.lower() == "mongodb":
+                db_specific_instructions = """
+                - ใช้ MongoDB Query Language แทน SQL
+                - เขียนในรูปแบบ JavaScript เพื่อใช้กับ MongoDB
+                - ใช้ $match, $group, $sort, $project สำหรับการสร้างคำสั่ง aggregation
+                - ตัวอย่าง: db.collection.find({field: value}) หรือ db.collection.aggregate([{$match: {field: value}}, {$group: {_id: "$field", count: {$sum: 1}}}])
+                """
+            
+            # สร้างคำแนะนำสำหรับ AI
+            prompt = f"""คุณเป็นผู้เชี่ยวชาญในการสร้างคำสั่ง SQL จากคำถามภาษาธรรมชาติ
+            
+โครงสร้างฐานข้อมูล:
+{json.dumps(schema, indent=2, ensure_ascii=False)}
 
 คำถาม: {question}
 
-คำสั่ง SQL:"""
+ประเภทฐานข้อมูล: {db_type}
+
+คำแนะนำเฉพาะสำหรับฐานข้อมูล {db_type}:
+{db_specific_instructions}
+
+คำแนะนำทั่วไป:
+1. สร้างคำสั่ง SQL ที่ตอบคำถามข้างต้น
+2. ใช้โครงสร้างฐานข้อมูลที่ให้มาเพื่อสร้างคำสั่ง SQL ที่ถูกต้อง
+3. ตรวจสอบความถูกต้องของชื่อตารางและคอลัมน์
+4. ใช้ JOIN เมื่อจำเป็นต้องเชื่อมโยงข้อมูลจากหลายตาราง
+5. ใช้ WHERE, GROUP BY, HAVING, ORDER BY ตามความเหมาะสม
+6. ตอบกลับเฉพาะคำสั่ง SQL เท่านั้น ไม่ต้องมีคำอธิบายหรือเครื่องหมาย ```
+
+สร้างคำสั่ง SQL (หรือ MongoDB Query) ที่เหมาะสมสำหรับคำถามนี้:"""
+
+            # ส่งคำขอไปยัง OpenAI API
+            response = await self.client.chat.completions.create(
+                model="gpt-4o",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                max_tokens=500
+            )
+            
+            # ดึงคำตอบจาก API
+            sql_query = response.choices[0].message.content.strip()
+            
+            # ลบเครื่องหมาย ``` หรือ ```sql ถ้ามี
+            sql_query = re.sub(r'^```sql\s*|^```\s*|```$', '', sql_query, flags=re.MULTILINE).strip()
+            
+            logger.info(f"สร้างคำสั่ง SQL สำเร็จ: {sql_query}")
+            return sql_query
+            
+        except Exception as e:
+            logger.error(f"เกิดข้อผิดพลาดในการสร้างคำสั่ง SQL: {str(e)}")
+            return f"SELECT 'เกิดข้อผิดพลาด: {str(e)}' AS error"
+    
+    async def analyze_sql_result(self, question, sql_query, result_data, db_type="mysql", callback=None):
+        """
+        วิเคราะห์ผลลัพธ์จากการรันคำสั่ง SQL
         
+        Args:
+            question (str): คำถามภาษาธรรมชาติ
+            sql_query (str): คำสั่ง SQL ที่ใช้
+            result_data (list): ผลลัพธ์จากการรันคำสั่ง SQL
+            db_type (str): ประเภทฐานข้อมูล (mysql, postgresql, mongodb)
+            callback (callable, optional): ฟังก์ชันที่จะถูกเรียกเมื่อได้รับข้อความแต่ละส่วน
+        
+        Returns:
+            str: การวิเคราะห์ผลลัพธ์
+        """
         try:
+            logger.info(f"กำลังวิเคราะห์ผลลัพธ์สำหรับคำถาม: {question}")
+            logger.info(f"ประเภทฐานข้อมูล: {db_type}")
+            
+            if not self.client:
+                error_message = "OpenAI client ไม่ได้ถูกกำหนดค่า"
+                logger.error(error_message)
+                if callback:
+                    await callback(error_message)
+                return error_message
+            
+            # แปลงผลลัพธ์เป็น JSON
+            result_json = json.dumps(result_data, ensure_ascii=False, cls=CustomJSONEncoder)
+            
+            # สร้างคำแนะนำเฉพาะสำหรับแต่ละประเภทฐานข้อมูล
+            db_specific_instructions = ""
+            if db_type.lower() == "mysql":
+                db_specific_instructions = """
+                - คำนึงถึงว่าผลลัพธ์มาจากฐานข้อมูล MySQL
+                - ชื่อคอลัมน์อาจมีการใช้ backticks (`) ในคำสั่ง SQL
+                """
+            elif db_type.lower() == "postgresql":
+                db_specific_instructions = """
+                - คำนึงถึงว่าผลลัพธ์มาจากฐานข้อมูล PostgreSQL
+                - ชื่อคอลัมน์อาจมีการใช้ double quotes (") ในคำสั่ง SQL
+                """
+            elif db_type.lower() == "mongodb":
+                db_specific_instructions = """
+                - คำนึงถึงว่าผลลัพธ์มาจากฐานข้อมูล MongoDB
+                - ผลลัพธ์อาจมีรูปแบบที่แตกต่างจาก SQL ทั่วไป เนื่องจาก MongoDB เป็นฐานข้อมูลแบบ NoSQL
+                """
+            
+            # โหลดคำแนะนำจากไฟล์
+            prompt_template = self.load_prompts().get("sql_analysis_prompt", "")
+            
+            # สร้างคำแนะนำสำหรับ AI
+            prompt = f"""คุณเป็นผู้เชี่ยวชาญในการวิเคราะห์ข้อมูลและการตอบคำถามจากผลลัพธ์ SQL
+
+คำถาม: {question}
+
+คำสั่ง SQL ที่ใช้: {sql_query}
+
+ประเภทฐานข้อมูล: {db_type}
+
+คำแนะนำเฉพาะสำหรับฐานข้อมูล {db_type}:
+{db_specific_instructions}
+
+ผลลัพธ์: {result_json}
+
+{prompt_template}
+
+กรุณาวิเคราะห์ผลลัพธ์และตอบคำถามข้างต้น:"""
+            
+            # ส่งคำขอไปยัง OpenAI API
             if callback:
-                # ถ้ามี callback ให้ใช้ stream mode
-                full_response = ""
-                stream = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    max_tokens=500,
-                    temperature=0.1,
+                # ถ้ามี callback ให้ใช้ streaming mode
+                stream = await self.client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.7,
                     stream=True
                 )
                 
-                for chunk in stream:
+                full_response = ""
+                async for chunk in stream:
                     if chunk.choices[0].delta.content is not None:
                         content = chunk.choices[0].delta.content
                         full_response += content
-                        callback(content)
+                        await callback(content)
                 
-                # ลบ markdown code block syntax ถ้ามี
-                full_response = full_response.replace('```sql', '').replace('```', '').strip()
                 return full_response
             else:
-                # ถ้าไม่มี callback ให้ใช้ non-stream mode
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    max_tokens=500,
-                    temperature=0.1  # ใช้ temperature ต่ำเพื่อให้ได้คำตอบที่แน่นอน
+                # ถ้าไม่มี callback ให้ใช้ non-streaming mode
+                response = await self.client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.7
                 )
-                sql_query = response.choices[0].message.content.strip()
                 
-                # ลบ markdown code block syntax ถ้ามี
-                sql_query = sql_query.replace('```sql', '').replace('```', '').strip()
-                
-                return sql_query
-        except Exception as e:
-            error_message = f"เกิดข้อผิดพลาดในการสร้างคำสั่ง SQL: {str(e)}"
-            logger.error(error_message)
-            if callback:
-                callback(error_message)
-            return error_message
-    
-    def analyze_sql_result(self, question, sql_query, result_data, callback=None):
-        """
-        ฟังก์ชันใหม่สำหรับวิเคราะห์ผลลัพธ์จากการ execute คำสั่ง SQL
-        
-        Args:
-            question: คำถามภาษาธรรมชาติ
-            sql_query: คำสั่ง SQL ที่ใช้
-            result_data: ผลลัพธ์จากการ execute คำสั่ง SQL
-            callback: ฟังก์ชันที่จะถูกเรียกเมื่อได้รับข้อความแต่ละส่วน
-        
-        Returns:
-            การวิเคราะห์ผลลัพธ์
-        """
-        try:
-            # ส่งข้อความว่างเพื่อเริ่มต้น callback
-            if callback:
-                callback("")
-                
-            # ตรวจสอบว่ามี client หรือไม่
-            if not hasattr(self, 'client') or self.client is None:
-                error_message = "ไม่สามารถเชื่อมต่อกับ OpenAI API ได้ (client ไม่ถูกกำหนด)"
-                logger.error(error_message)
-                if callback:
-                    callback(error_message)
-                    callback(None)
-                return error_message
-                
-            # แปลงผลลัพธ์เป็น JSON
-            result_json = json.dumps(result_data, ensure_ascii=False)
+                analysis = response.choices[0].message.content.strip()
+                return analysis
             
-            # ใช้คำแนะนำที่กำหนดไว้
-            system_prompt = self.default_sql_analysis_prompt
-            
-            user_prompt = f"""คำถาม: {question}
-
-คำสั่ง SQL ที่ใช้:
-{sql_query}
-
-ผลลัพธ์จากการ execute คำสั่ง SQL:
-{result_json}
-
-กรุณาวิเคราะห์ผลลัพธ์และตอบคำถามอย่างละเอียด"""
-
-            # ถ้ามี callback ให้ใช้ stream mode
-            if callback:
-                try:
-                    logger.info("เริ่มการวิเคราะห์แบบ streaming")
-                    full_response = ""
-                    stream = self.client.chat.completions.create(
-                        model=self.model,
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_prompt}
-                        ],
-                        stream=True,
-                        temperature=0.7
-                    )
-                    
-                    for chunk in stream:
-                        if hasattr(chunk.choices[0], 'delta') and hasattr(chunk.choices[0].delta, 'content') and chunk.choices[0].delta.content:
-                            content = chunk.choices[0].delta.content
-                            full_response += content
-                            callback(content)
-                    
-                    # ส่ง None เพื่อบอกว่าสิ้นสุดการส่งข้อมูล
-                    logger.info("สิ้นสุดการวิเคราะห์แบบ streaming")
-                    callback(None)
-                    return full_response
-                except Exception as e:
-                    error_message = f"เกิดข้อผิดพลาดในการวิเคราะห์แบบ streaming: {str(e)}"
-                    logger.error(error_message)
-                    callback(f"ขออภัย เกิดข้อผิดพลาดในการวิเคราะห์: {str(e)}")
-                    callback(None)
-                    return error_message
-            else:
-                # ถ้าไม่มี callback ให้ใช้ non-stream mode
-                try:
-                    response = self.client.chat.completions.create(
-                        model=self.model,
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_prompt}
-                        ],
-                        temperature=0.7
-                    )
-                    return response.choices[0].message.content
-                except Exception as e:
-                    error_message = f"เกิดข้อผิดพลาดในการวิเคราะห์แบบไม่ streaming: {str(e)}"
-                    logger.error(error_message)
-                    return error_message
         except Exception as e:
             error_message = f"เกิดข้อผิดพลาดในการวิเคราะห์ผลลัพธ์: {str(e)}"
             logger.error(error_message)
             if callback:
-                callback(f"ขออภัย เกิดข้อผิดพลาดในการวิเคราะห์: {str(e)}")
-                callback(None)
+                await callback(error_message)
             return error_message
     
     def generate_text_with_stream(self, user_message, callback=None):
