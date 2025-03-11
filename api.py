@@ -375,22 +375,57 @@ async def stream_sql_query(query_request: SQLQueryRequest):
                 yield f"data: {json.dumps({'status': 'analyzing_result'}, ensure_ascii=False)}\n\n"
                 yield f"data: {json.dumps({'analysis_start': True}, ensure_ascii=False)}\n\n"
                 
-                # วิเคราะห์ผลลัพธ์
-                def callback(content):
-                    return content
-                
                 # ใช้ asyncio.Queue เพื่อรับข้อความจาก callback
                 queue = asyncio.Queue()
                 
                 async def analysis_callback(content):
                     await queue.put(content)
                 
+                # แปลงผลลัพธ์เป็น JSON
+                result_json = json.dumps(result, ensure_ascii=False, cls=CustomJSONEncoder)
+                
+                # สร้างคำแนะนำเฉพาะสำหรับแต่ละประเภทฐานข้อมูล
+                db_specific_instructions = ""
+                if db_type.lower() == "mysql":
+                    db_specific_instructions = """
+                    - คำนึงถึงว่าผลลัพธ์มาจากฐานข้อมูล MySQL
+                    - ชื่อคอลัมน์อาจมีการใช้ backticks (`) ในคำสั่ง SQL
+                    """
+                elif db_type.lower() == "postgresql":
+                    db_specific_instructions = """
+                    - คำนึงถึงว่าผลลัพธ์มาจากฐานข้อมูล PostgreSQL
+                    - ชื่อคอลัมน์อาจมีการใช้ double quotes (") ในคำสั่ง SQL
+                    """
+                elif db_type.lower() == "mongodb":
+                    db_specific_instructions = """
+                    - คำนึงถึงว่าผลลัพธ์มาจากฐานข้อมูล MongoDB
+                    - ผลลัพธ์อาจมีรูปแบบที่แตกต่างจาก SQL ทั่วไป เนื่องจาก MongoDB เป็นฐานข้อมูลแบบ NoSQL
+                    """
+                
+                # โหลดคำแนะนำจากไฟล์
+                prompt_template = openai_service.load_prompts().get("sql_analysis_prompt", "")
+                
+                # สร้างคำแนะนำสำหรับ AI
+                prompt = f"""คุณเป็นผู้เชี่ยวชาญในการวิเคราะห์ข้อมูลและการตอบคำถามจากผลลัพธ์ SQL
+
+คำถาม: {question}
+
+คำสั่ง SQL ที่ใช้: {sql_query}
+
+ประเภทฐานข้อมูล: {db_type}
+
+คำแนะนำเฉพาะสำหรับฐานข้อมูล {db_type}:
+{db_specific_instructions}
+
+ผลลัพธ์: {result_json}
+
+{prompt_template}
+
+กรุณาวิเคราะห์ผลลัพธ์และตอบคำถามข้างต้น:"""
+                
                 # เริ่มการวิเคราะห์ในอีก task หนึ่ง
                 analysis_task = asyncio.create_task(
-                    asyncio.to_thread(
-                        openai_service.analyze_sql_result,
-                        question, sql_query, result, db_type, analysis_callback
-                    )
+                    openai_service.analyze_sql_result_with_callback(prompt, analysis_callback)
                 )
                 
                 # รอรับข้อความจาก callback และส่งกลับไปยังผู้ใช้

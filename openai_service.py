@@ -313,7 +313,7 @@ class OpenAIService:
                 callback(error_message)
             return error_message
     
-    async def generate_sql_from_question(self, question, schema, db_type="mysql"):
+    def generate_sql_from_question(self, question, schema, db_type="mysql"):
         """
         สร้างคำสั่ง SQL จากคำถามภาษาธรรมชาติ
         
@@ -400,7 +400,7 @@ class OpenAIService:
             logger.error(f"เกิดข้อผิดพลาดในการสร้างคำสั่ง SQL: {str(e)}")
             return f"SELECT 'เกิดข้อผิดพลาด: {str(e)}' AS error"
     
-    async def analyze_sql_result(self, question, sql_query, result_data, db_type="mysql", callback=None):
+    def analyze_sql_result(self, question, sql_query, result_data, db_type="mysql", callback=None):
         """
         วิเคราะห์ผลลัพธ์จากการรันคำสั่ง SQL
         
@@ -421,8 +421,6 @@ class OpenAIService:
             if not self.client:
                 error_message = "OpenAI client ไม่ได้ถูกกำหนดค่า"
                 logger.error(error_message)
-                if callback:
-                    await callback(error_message)
                 return error_message
             
             # แปลงผลลัพธ์เป็น JSON
@@ -469,22 +467,8 @@ class OpenAIService:
             
             # ส่งคำขอไปยัง OpenAI API
             if callback:
-                # ถ้ามี callback ให้ใช้ streaming mode
-                stream = self.client.chat.completions.create(
-                    model="gpt-4o",
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.7,
-                    stream=True
-                )
-                
-                full_response = ""
-                for chunk in stream:
-                    if chunk.choices[0].delta.content is not None:
-                        content = chunk.choices[0].delta.content
-                        full_response += content
-                        await callback(content)
-                
-                return full_response
+                # ถ้ามี callback ให้ใช้ฟังก์ชัน analyze_sql_result_with_callback
+                return self.analyze_sql_result_with_callback(prompt, callback)
             else:
                 # ถ้าไม่มี callback ให้ใช้ non-streaming mode
                 response = self.client.chat.completions.create(
@@ -499,8 +483,40 @@ class OpenAIService:
         except Exception as e:
             error_message = f"เกิดข้อผิดพลาดในการวิเคราะห์ผลลัพธ์: {str(e)}"
             logger.error(error_message)
-            if callback:
-                await callback(error_message)
+            return error_message
+    
+    async def analyze_sql_result_with_callback(self, prompt, callback):
+        """
+        วิเคราะห์ผลลัพธ์จากการรันคำสั่ง SQL แบบ streaming และเรียกใช้ callback
+        
+        Args:
+            prompt (str): คำแนะนำสำหรับ AI
+            callback (callable): ฟังก์ชันที่จะถูกเรียกเมื่อได้รับข้อความแต่ละส่วน
+        
+        Returns:
+            str: การวิเคราะห์ผลลัพธ์
+        """
+        try:
+            # ถ้ามี callback ให้ใช้ streaming mode
+            stream = self.client.chat.completions.create(
+                model="gpt-4o",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7,
+                stream=True
+            )
+            
+            full_response = ""
+            for chunk in stream:
+                if chunk.choices[0].delta.content is not None:
+                    content = chunk.choices[0].delta.content
+                    full_response += content
+                    await callback(content)
+            
+            return full_response
+        except Exception as e:
+            error_message = f"เกิดข้อผิดพลาดในการวิเคราะห์ผลลัพธ์แบบ streaming: {str(e)}"
+            logger.error(error_message)
+            await callback(error_message)
             return error_message
     
     def generate_text_with_stream(self, user_message, callback=None):
