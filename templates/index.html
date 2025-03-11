@@ -16,7 +16,8 @@
         <div class="tabs">
             <div class="tab active" data-tab="chat">แชท</div>
             <div class="tab" data-tab="sql-query">ค้นหาด้วย SQL</div>
-            <div class="tab" data-tab="settings">ตั้งค่า</div>
+            <div class="tab" data-tab="settings">ตั้งค่า AI</div>
+            <div class="tab" data-tab="db-settings">ตั้งค่าฐานข้อมูล</div>
         </div>
 
         <div id="chat" class="tab-content active">
@@ -52,6 +53,60 @@
                     <button id="save-prompt" class="save-button">บันทึกคำแนะนำ</button>
                     <button id="reset-prompt" class="reset-button">คืนค่าเริ่มต้น</button>
                 </div>
+            </div>
+        </div>
+
+        <div id="db-settings" class="tab-content">
+            <div class="settings-container">
+                <h2>ตั้งค่าการเชื่อมต่อฐานข้อมูล</h2>
+                <p>กำหนดการเชื่อมต่อฐานข้อมูลที่ต้องการใช้งาน</p>
+                
+                <div class="form-group">
+                    <label for="db-type">ประเภทฐานข้อมูล:</label>
+                    <select id="db-type" class="form-control">
+                        <option value="mysql">MySQL</option>
+                        <option value="postgresql">PostgreSQL</option>
+                        <option value="mongodb">MongoDB</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="db-host">Host:</label>
+                    <input type="text" id="db-host" class="form-control" placeholder="localhost">
+                </div>
+                
+                <div class="form-group">
+                    <label for="db-port">Port:</label>
+                    <input type="text" id="db-port" class="form-control" placeholder="3306">
+                </div>
+                
+                <div class="form-group">
+                    <label for="db-user">User:</label>
+                    <input type="text" id="db-user" class="form-control" placeholder="root">
+                </div>
+                
+                <div class="form-group">
+                    <label for="db-password">Password:</label>
+                    <input type="password" id="db-password" class="form-control" placeholder="password">
+                </div>
+                
+                <div class="form-group">
+                    <label for="db-name">Database Name:</label>
+                    <input type="text" id="db-name" class="form-control" placeholder="mydatabase">
+                </div>
+                
+                <div class="form-group mongodb-only" style="display: none;">
+                    <label for="mongodb-uri">MongoDB URI (ไม่บังคับ):</label>
+                    <input type="text" id="mongodb-uri" class="form-control" placeholder="mongodb://username:password@host:port/database">
+                    <small class="form-text text-muted">หากระบุ URI จะใช้ค่านี้แทนการตั้งค่าแยก</small>
+                </div>
+                
+                <div class="actions">
+                    <button id="test-connection" class="test-button">ทดสอบการเชื่อมต่อ</button>
+                    <button id="save-connection" class="save-button">บันทึกการเชื่อมต่อ</button>
+                </div>
+                
+                <div id="connection-status" class="connection-status"></div>
             </div>
         </div>
     </div>
@@ -517,6 +572,138 @@
             // คืนค่าเริ่มต้น
             resetPromptButton.addEventListener('click', function() {
                 aiPromptTextarea.value = defaultPrompt;
+            });
+
+            // Database Settings functionality
+            const dbTypeSelect = document.getElementById('db-type');
+            const dbHostInput = document.getElementById('db-host');
+            const dbPortInput = document.getElementById('db-port');
+            const dbUserInput = document.getElementById('db-user');
+            const dbPasswordInput = document.getElementById('db-password');
+            const dbNameInput = document.getElementById('db-name');
+            const mongodbUriInput = document.getElementById('mongodb-uri');
+            const testConnectionButton = document.getElementById('test-connection');
+            const saveConnectionButton = document.getElementById('save-connection');
+            const connectionStatus = document.getElementById('connection-status');
+            
+            // แสดง/ซ่อนฟิลด์ MongoDB URI ตามประเภทฐานข้อมูล
+            dbTypeSelect.addEventListener('change', function() {
+                const mongodbOnly = document.querySelector('.mongodb-only');
+                if (dbTypeSelect.value === 'mongodb') {
+                    mongodbOnly.style.display = 'block';
+                } else {
+                    mongodbOnly.style.display = 'none';
+                }
+                
+                // ปรับค่า port ตามประเภทฐานข้อมูล
+                if (dbTypeSelect.value === 'mysql') {
+                    dbPortInput.value = '3306';
+                } else if (dbTypeSelect.value === 'postgresql') {
+                    dbPortInput.value = '5432';
+                } else if (dbTypeSelect.value === 'mongodb') {
+                    dbPortInput.value = '27017';
+                }
+            });
+            
+            // โหลดการตั้งค่าปัจจุบันเมื่อเปิดแท็บตั้งค่าฐานข้อมูล
+            document.querySelector('.tab[data-tab="db-settings"]').addEventListener('click', function() {
+                fetch('/api/db/connection')
+                    .then(response => response.json())
+                    .then(data => {
+                        dbTypeSelect.value = data.db_type || 'mysql';
+                        dbHostInput.value = data.host || '';
+                        dbPortInput.value = data.port || '';
+                        dbUserInput.value = data.user || '';
+                        dbNameInput.value = data.database || '';
+                        mongodbUriInput.value = data.mongodb_uri || '';
+                        
+                        // แสดง/ซ่อนฟิลด์ MongoDB URI
+                        const mongodbOnly = document.querySelector('.mongodb-only');
+                        if (dbTypeSelect.value === 'mongodb') {
+                            mongodbOnly.style.display = 'block';
+                        } else {
+                            mongodbOnly.style.display = 'none';
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                        connectionStatus.innerHTML = '<div class="error">ไม่สามารถโหลดการตั้งค่าการเชื่อมต่อได้</div>';
+                    });
+            });
+            
+            // ทดสอบการเชื่อมต่อ
+            testConnectionButton.addEventListener('click', function() {
+                connectionStatus.innerHTML = '<div class="info">กำลังทดสอบการเชื่อมต่อ...</div>';
+                
+                const connectionData = {
+                    db_type: dbTypeSelect.value,
+                    host: dbHostInput.value,
+                    port: dbPortInput.value,
+                    user: dbUserInput.value,
+                    password: dbPasswordInput.value,
+                    database: dbNameInput.value,
+                    mongodb_uri: mongodbUriInput.value
+                };
+                
+                fetch('/api/db/connection/test', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(connectionData)
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        connectionStatus.innerHTML = '<div class="success">การเชื่อมต่อสำเร็จ</div>';
+                    } else {
+                        connectionStatus.innerHTML = `<div class="error">การเชื่อมต่อล้มเหลว: ${data.message}</div>`;
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    connectionStatus.innerHTML = '<div class="error">เกิดข้อผิดพลาดในการทดสอบการเชื่อมต่อ</div>';
+                });
+            });
+            
+            // บันทึกการเชื่อมต่อ
+            saveConnectionButton.addEventListener('click', function() {
+                connectionStatus.innerHTML = '<div class="info">กำลังบันทึกการเชื่อมต่อ...</div>';
+                
+                const connectionData = {
+                    db_type: dbTypeSelect.value,
+                    host: dbHostInput.value,
+                    port: dbPortInput.value,
+                    user: dbUserInput.value,
+                    password: dbPasswordInput.value,
+                    database: dbNameInput.value,
+                    mongodb_uri: mongodbUriInput.value
+                };
+                
+                fetch('/api/db/connection', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(connectionData)
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        connectionStatus.innerHTML = '<div class="success">บันทึกการเชื่อมต่อสำเร็จ</div>';
+                        
+                        // แจ้งเตือนให้รีสตาร์ทแอปพลิเคชัน
+                        setTimeout(() => {
+                            alert('การตั้งค่าการเชื่อมต่อฐานข้อมูลได้รับการบันทึกแล้ว แนะนำให้รีสตาร์ทแอปพลิเคชันเพื่อให้การเปลี่ยนแปลงมีผล');
+                        }, 500);
+                    } else {
+                        connectionStatus.innerHTML = `<div class="error">บันทึกการเชื่อมต่อล้มเหลว: ${data.message}</div>`;
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    connectionStatus.innerHTML = '<div class="error">เกิดข้อผิดพลาดในการบันทึกการเชื่อมต่อ</div>';
+                });
             });
         });
     </script>

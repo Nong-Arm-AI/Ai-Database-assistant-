@@ -9,7 +9,7 @@ import json
 import asyncio
 import uvicorn
 import logging
-from database import get_data_from_database, get_database_schema, execute_sql_query
+from database import get_data_from_database, get_database_schema, execute_sql_query, db_manager
 from openai_service import OpenAIService
 from models import Data
 import decimal
@@ -70,6 +70,15 @@ class SQLQueryRequest(BaseModel):
 
 class PromptUpdateRequest(BaseModel):
     prompt: str
+
+class DatabaseConnectionRequest(BaseModel):
+    db_type: str
+    host: str
+    port: str
+    user: str
+    password: str
+    database: str
+    mongodb_uri: Optional[str] = None
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
@@ -468,6 +477,81 @@ async def update_prompt(prompt_request: PromptUpdateRequest):
     except Exception as e:
         logger.error(f"เกิดข้อผิดพลาดในการอัปเดตคำแนะนำ: {str(e)}")
         raise HTTPException(status_code=500, detail=f"เกิดข้อผิดพลาด: {str(e)}")
+
+@app.get("/api/db/connection")
+async def get_db_connection():
+    """ดึงข้อมูลการเชื่อมต่อฐานข้อมูลปัจจุบัน"""
+    try:
+        # ไม่ส่งคืนรหัสผ่านเพื่อความปลอดภัย
+        connection_info = {
+            'db_type': db_manager.db_type,
+            'host': db_manager.connection_params['host'],
+            'port': db_manager.connection_params['port'],
+            'user': db_manager.connection_params['user'],
+            'database': db_manager.connection_params['database'],
+            'mongodb_uri': db_manager.connection_params['mongodb_uri'] if db_manager.connection_params['mongodb_uri'] else None
+        }
+        return connection_info
+    except Exception as e:
+        logger.error(f"เกิดข้อผิดพลาดในการดึงข้อมูลการเชื่อมต่อฐานข้อมูล: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"เกิดข้อผิดพลาด: {str(e)}")
+
+@app.post("/api/db/connection")
+async def update_db_connection(connection_request: DatabaseConnectionRequest):
+    """อัปเดตการเชื่อมต่อฐานข้อมูล"""
+    try:
+        # อัปเดตการเชื่อมต่อ
+        success = db_manager.update_connection(
+            connection_request.db_type,
+            connection_request.host,
+            connection_request.port,
+            connection_request.user,
+            connection_request.password,
+            connection_request.database,
+            connection_request.mongodb_uri
+        )
+        
+        if success:
+            # บันทึกการตั้งค่าลงในไฟล์ .env
+            db_manager.save_connection_to_env()
+            return {"status": "success", "message": "อัปเดตการเชื่อมต่อฐานข้อมูลสำเร็จ"}
+        else:
+            raise HTTPException(status_code=500, detail="ไม่สามารถเชื่อมต่อกับฐานข้อมูลได้")
+    except Exception as e:
+        logger.error(f"เกิดข้อผิดพลาดในการอัปเดตการเชื่อมต่อฐานข้อมูล: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"เกิดข้อผิดพลาด: {str(e)}")
+
+@app.post("/api/db/connection/test")
+async def test_db_connection(connection_request: DatabaseConnectionRequest):
+    """ทดสอบการเชื่อมต่อฐานข้อมูล"""
+    try:
+        # สร้าง DatabaseManager ชั่วคราวเพื่อทดสอบการเชื่อมต่อ
+        from database import DatabaseManager
+        test_manager = DatabaseManager()
+        
+        # อัปเดตการเชื่อมต่อแต่ไม่บันทึกลงในไฟล์ .env
+        success = test_manager.update_connection(
+            connection_request.db_type,
+            connection_request.host,
+            connection_request.port,
+            connection_request.user,
+            connection_request.password,
+            connection_request.database,
+            connection_request.mongodb_uri
+        )
+        
+        # ทดสอบการเชื่อมต่อ
+        if success:
+            connection_test = test_manager.test_connection()
+            if connection_test:
+                return {"status": "success", "message": "การเชื่อมต่อสำเร็จ"}
+            else:
+                return {"status": "error", "message": "ไม่สามารถเชื่อมต่อกับฐานข้อมูลได้"}
+        else:
+            return {"status": "error", "message": "ไม่สามารถเชื่อมต่อกับฐานข้อมูลได้"}
+    except Exception as e:
+        logger.error(f"เกิดข้อผิดพลาดในการทดสอบการเชื่อมต่อฐานข้อมูล: {str(e)}")
+        return {"status": "error", "message": f"เกิดข้อผิดพลาด: {str(e)}"}
 
 if __name__ == "__main__":
     uvicorn.run("api:app", host="0.0.0.0", port=8000, reload=True) 

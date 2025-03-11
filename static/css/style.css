@@ -408,4 +408,87 @@ textarea#ai-prompt:focus {
 
 .reset-button:hover {
     background-color: #5a6268;
+}
+
+/* เพิ่มสไตล์สำหรับหน้าตั้งค่าฐานข้อมูล */
+.form-group {
+    margin-bottom: 15px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: bold;
+    color: #2c3e50;
+}
+
+.form-control {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 14px;
+    transition: border-color 0.3s;
+}
+
+.form-control:focus {
+    border-color: #4a76a8;
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(74, 118, 168, 0.2);
+}
+
+select.form-control {
+    height: 38px;
+    background-color: white;
+}
+
+.form-text {
+    font-size: 12px;
+    color: #6c757d;
+    margin-top: 5px;
+}
+
+.test-button {
+    background-color: #17a2b8;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    margin-right: 10px;
+}
+
+.test-button:hover {
+    background-color: #138496;
+}
+
+.connection-status {
+    margin-top: 20px;
+    padding: 10px;
+    border-radius: 4px;
+}
+
+.connection-status .success {
+    background-color: #d4edda;
+    color: #155724;
+    padding: 10px;
+    border-radius: 4px;
+    border: 1px solid #c3e6cb;
+}
+
+.connection-status .error {
+    background-color: #f8d7da;
+    color: #721c24;
+    padding: 10px;
+    border-radius: 4px;
+    border: 1px solid #f5c6cb;
+}
+
+.connection-status .info {
+    background-color: #d1ecf1;
+    color: #0c5460;
+    padding: 10px;
+    border-radius: 4px;
+    border: 1px solid #bee5eb;
 } 
