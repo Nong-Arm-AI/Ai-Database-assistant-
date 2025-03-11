@@ -28,13 +28,15 @@ class OpenAIService:
         self.frequency_penalty = 0.0
         self.presence_penalty = 0.0
         
-        # ใช้ client ที่สร้างไว้แล้วที่ระดับโมดูล
-        self.client = client
-        
         # ตรวจสอบว่า API key ถูกตั้งค่าหรือไม่
         if not api_key:
             logger.error("ไม่พบ OPENAI_API_KEY ในไฟล์ .env กรุณาตรวจสอบการตั้งค่า")
-            
+            self.client = None
+        else:
+            # ใช้ client ที่สร้างไว้แล้วที่ระดับโมดูล
+            self.client = client
+            logger.info("กำหนดค่า OpenAI client สำเร็จ")
+        
         # คำแนะนำเริ่มต้นสำหรับ AI
         self.default_sql_analysis_prompt = """คุณเป็นผู้เชี่ยวชาญในการวิเคราะห์ข้อมูลและตอบคำถามจากผลลัพธ์ของคำสั่ง SQL
 คุณจะได้รับคำถามภาษาธรรมชาติ, คำสั่ง SQL ที่ใช้, และผลลัพธ์จากการ execute คำสั่ง SQL
@@ -501,7 +503,15 @@ class OpenAIService:
             str: การวิเคราะห์ผลลัพธ์
         """
         try:
+            # ตรวจสอบว่า client มีค่าหรือไม่
+            if not self.client:
+                error_message = "OpenAI client ไม่ได้ถูกกำหนดค่า"
+                logger.error(error_message)
+                await callback(error_message)
+                return error_message
+                
             # ถ้ามี callback ให้ใช้ streaming mode
+            logger.info("เริ่มการวิเคราะห์ผลลัพธ์แบบ streaming")
             stream = self.client.chat.completions.create(
                 model="gpt-4o",
                 messages=[{"role": "user", "content": prompt}],
@@ -516,11 +526,15 @@ class OpenAIService:
                     full_response += content
                     await callback(content)
             
+            logger.info("การวิเคราะห์ผลลัพธ์แบบ streaming เสร็จสิ้น")
             return full_response
         except Exception as e:
             error_message = f"เกิดข้อผิดพลาดในการวิเคราะห์ผลลัพธ์แบบ streaming: {str(e)}"
             logger.error(error_message)
-            await callback(error_message)
+            try:
+                await callback(error_message)
+            except Exception as callback_error:
+                logger.error(f"เกิดข้อผิดพลาดในการเรียก callback: {str(callback_error)}")
             return error_message
     
     def generate_text_with_stream(self, user_message, callback=None):

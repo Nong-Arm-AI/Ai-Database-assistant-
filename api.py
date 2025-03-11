@@ -344,7 +344,9 @@ async def stream_sql_query(query_request: SQLQueryRequest):
             # ดึงโครงสร้างฐานข้อมูล
             schema = get_database_schema()
             if not schema:
-                yield f"data: {json.dumps({'error': 'ไม่สามารถดึงโครงสร้างฐานข้อมูลได้'}, ensure_ascii=False)}\n\n"
+                error_msg = "ไม่สามารถดึงโครงสร้างฐานข้อมูลได้"
+                logger.error(error_msg)
+                yield f"data: {json.dumps({'error': error_msg}, ensure_ascii=False)}\n\n"
                 return
                 
             # ดึงประเภทฐานข้อมูลปัจจุบัน
@@ -368,6 +370,13 @@ async def stream_sql_query(query_request: SQLQueryRequest):
             try:
                 result = execute_sql_query(sql_query)
                 
+                # ตรวจสอบว่า result มีค่าหรือไม่
+                if result is None:
+                    error_msg = "ไม่สามารถรันคำสั่ง SQL ได้ ผลลัพธ์เป็น None"
+                    logger.error(error_msg)
+                    yield f"data: {json.dumps({'error': error_msg}, ensure_ascii=False)}\n\n"
+                    return
+                
                 # ส่งผลลัพธ์กลับไปยังผู้ใช้
                 yield f"data: {json.dumps({'result': result}, cls=CustomJSONEncoder, ensure_ascii=False)}\n\n"
                 
@@ -379,10 +388,17 @@ async def stream_sql_query(query_request: SQLQueryRequest):
                 queue = asyncio.Queue()
                 
                 async def analysis_callback(content):
-                    await queue.put(content)
+                    if content:
+                        await queue.put(content)
+                    else:
+                        logger.warning("ได้รับข้อความว่างเปล่าจาก callback")
                 
                 # แปลงผลลัพธ์เป็น JSON
-                result_json = json.dumps(result, ensure_ascii=False, cls=CustomJSONEncoder)
+                try:
+                    result_json = json.dumps(result, ensure_ascii=False, cls=CustomJSONEncoder)
+                except Exception as json_error:
+                    logger.error(f"เกิดข้อผิดพลาดในการแปลงผลลัพธ์เป็น JSON: {str(json_error)}")
+                    result_json = str(result)
                 
                 # สร้างคำแนะนำเฉพาะสำหรับแต่ละประเภทฐานข้อมูล
                 db_specific_instructions = ""
@@ -403,7 +419,12 @@ async def stream_sql_query(query_request: SQLQueryRequest):
                     """
                 
                 # โหลดคำแนะนำจากไฟล์
-                prompt_template = openai_service.load_prompts().get("sql_analysis_prompt", "")
+                prompts = openai_service.load_prompts()
+                if not prompts or "sql_analysis_prompt" not in prompts:
+                    logger.warning("ไม่พบคำแนะนำสำหรับการวิเคราะห์ SQL ใช้ค่าเริ่มต้น")
+                    prompt_template = openai_service.default_sql_analysis_prompt
+                else:
+                    prompt_template = prompts.get("sql_analysis_prompt", "")
                 
                 # สร้างคำแนะนำสำหรับ AI
                 prompt = f"""คุณเป็นผู้เชี่ยวชาญในการวิเคราะห์ข้อมูลและการตอบคำถามจากผลลัพธ์ SQL
@@ -423,6 +444,8 @@ async def stream_sql_query(query_request: SQLQueryRequest):
 
 กรุณาวิเคราะห์ผลลัพธ์และตอบคำถามข้างต้น:"""
                 
+                logger.info("เริ่มการวิเคราะห์ผลลัพธ์")
+                
                 # เริ่มการวิเคราะห์ในอีก task หนึ่ง
                 analysis_task = asyncio.create_task(
                     openai_service.analyze_sql_result_with_callback(prompt, analysis_callback)
@@ -440,6 +463,7 @@ async def stream_sql_query(query_request: SQLQueryRequest):
                                 # ถ้าได้รับข้อความว่างให้ตรวจสอบว่า task เสร็จสิ้นแล้วหรือไม่
                                 if analysis_task.done():
                                     break
+                                logger.warning("ได้รับข้อความว่างเปล่าจาก queue")
                         except asyncio.TimeoutError:
                             # ถ้าเกิด timeout ให้ตรวจสอบว่า task เสร็จสิ้นแล้วหรือไม่
                             if analysis_task.done():
@@ -451,6 +475,7 @@ async def stream_sql_query(query_request: SQLQueryRequest):
                     
                     # แจ้งว่าการวิเคราะห์เสร็จสิ้น
                     yield f"data: {json.dumps({'analysis_complete': True}, ensure_ascii=False)}\n\n"
+                    logger.info("การวิเคราะห์ผลลัพธ์เสร็จสิ้น")
                     
                 except Exception as e:
                     logger.error(f"เกิดข้อผิดพลาดในการวิเคราะห์ผลลัพธ์: {str(e)}")
