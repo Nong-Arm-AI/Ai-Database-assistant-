@@ -56,16 +56,20 @@ class OpenAIService:
     
     def load_prompts(self):
         """โหลดคำแนะนำจากฐานข้อมูลหรือไฟล์"""
+        prompts = {'sql_analysis_prompt': self.default_sql_analysis_prompt}
         try:
             # ตรวจสอบว่ามีไฟล์ prompts.json หรือไม่
             if os.path.exists('prompts.json'):
                 with open('prompts.json', 'r', encoding='utf-8') as f:
-                    prompts = json.load(f)
-                    if 'sql_analysis_prompt' in prompts:
-                        self.default_sql_analysis_prompt = prompts['sql_analysis_prompt']
+                    loaded_prompts = json.load(f)
+                    if 'sql_analysis_prompt' in loaded_prompts:
+                        self.default_sql_analysis_prompt = loaded_prompts['sql_analysis_prompt']
+                        prompts['sql_analysis_prompt'] = loaded_prompts['sql_analysis_prompt']
                         logger.info("โหลดคำแนะนำสำหรับ AI จากไฟล์ prompts.json สำเร็จ")
         except Exception as e:
             logger.error(f"เกิดข้อผิดพลาดในการโหลดคำแนะนำ: {str(e)}")
+        
+        return prompts
     
     def save_prompts(self, sql_analysis_prompt):
         """บันทึกคำแนะนำลงในไฟล์"""
