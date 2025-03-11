@@ -161,13 +161,13 @@ async def ai_sql_query(query_request: SQLQueryRequest):
         
         # สร้างคำสั่ง SQL
         openai_service = OpenAIService()
-        sql_query = await openai_service.generate_sql_from_question(query_request.question, schema, db_type)
+        sql_query = openai_service.generate_sql_from_question(query_request.question, schema, db_type)
         
         # รันคำสั่ง SQL
         result = execute_sql_query(sql_query)
         
         # วิเคราะห์ผลลัพธ์
-        analysis = await openai_service.analyze_sql_result(query_request.question, sql_query, result, db_type)
+        analysis = openai_service.analyze_sql_result(query_request.question, sql_query, result, db_type)
         
         # ส่งผลลัพธ์กลับไปยังผู้ใช้
         return {
@@ -356,7 +356,7 @@ async def stream_sql_query(query_request: SQLQueryRequest):
             
             # สร้างคำสั่ง SQL
             openai_service = OpenAIService()
-            sql_query = await openai_service.generate_sql_from_question(question, schema, db_type)
+            sql_query = openai_service.generate_sql_from_question(question, schema, db_type)
             
             # ส่งคำสั่ง SQL กลับไปยังผู้ใช้
             yield f"data: {json.dumps({'sql_query': sql_query}, ensure_ascii=False)}\n\n"
@@ -387,9 +387,9 @@ async def stream_sql_query(query_request: SQLQueryRequest):
                 
                 # เริ่มการวิเคราะห์ในอีก task หนึ่ง
                 analysis_task = asyncio.create_task(
-                    openai_service.analyze_sql_result(
-                        question, sql_query, result, 
-                        callback=analysis_callback
+                    asyncio.to_thread(
+                        openai_service.analyze_sql_result,
+                        question, sql_query, result, db_type, analysis_callback
                     )
                 )
                 

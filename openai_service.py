@@ -380,7 +380,7 @@ class OpenAIService:
 สร้างคำสั่ง SQL (หรือ MongoDB Query) ที่เหมาะสมสำหรับคำถามนี้:"""
 
             # ส่งคำขอไปยัง OpenAI API
-            response = await self.client.chat.completions.create(
+            response = self.client.chat.completions.create(
                 model="gpt-4o",
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1,
@@ -470,7 +470,7 @@ class OpenAIService:
             # ส่งคำขอไปยัง OpenAI API
             if callback:
                 # ถ้ามี callback ให้ใช้ streaming mode
-                stream = await self.client.chat.completions.create(
+                stream = self.client.chat.completions.create(
                     model="gpt-4o",
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.7,
@@ -478,7 +478,7 @@ class OpenAIService:
                 )
                 
                 full_response = ""
-                async for chunk in stream:
+                for chunk in stream:
                     if chunk.choices[0].delta.content is not None:
                         content = chunk.choices[0].delta.content
                         full_response += content
@@ -487,7 +487,7 @@ class OpenAIService:
                 return full_response
             else:
                 # ถ้าไม่มี callback ให้ใช้ non-streaming mode
-                response = await self.client.chat.completions.create(
+                response = self.client.chat.completions.create(
                     model="gpt-4o",
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.7
