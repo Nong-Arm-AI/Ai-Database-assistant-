@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat Bot AI</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Chat Bot AI</h1>
+            <p>ระบบ Chat Bot AI ที่ใช้ OpenAI GPT-4o และเชื่อมต่อกับฐานข้อมูล</p>
+        </header>
+
+        <div class="tabs">
+            <div class="tab active" data-tab="chat">แชท</div>
+            <div class="tab" data-tab="sql-query">ค้นหาด้วย SQL</div>
+            <div class="tab" data-tab="settings">ตั้งค่า</div>
+        </div>
+
+        <div id="chat" class="tab-content active">
+            <div class="chat-container" id="chat-messages"></div>
+            <div class="input-container">
+                <input type="text" id="user-message" placeholder="พิมพ์ข้อความของคุณที่นี่...">
+                <button id="send-button">ส่ง</button>
+            </div>
+            <div class="actions">
+                <button id="refresh-chat" class="refresh-button">เริ่มแชทใหม่</button>
+            </div>
+        </div>
+
+        <div id="sql-query" class="tab-content">
+            <div class="chat-container" id="sql-messages"></div>
+            <div class="input-container">
+                <input type="text" id="sql-question" placeholder="พิมพ์คำถามสำหรับสร้างคำสั่ง SQL...">
+                <button id="sql-button">ค้นหาด้วย SQL</button>
+            </div>
+            <div class="actions">
+                <button id="refresh-sql" class="refresh-button">เริ่มใหม่</button>
+            </div>
+        </div>
+
+        <div id="settings" class="tab-content">
+            <div class="settings-container">
+                <h2>ตั้งค่าคำแนะนำสำหรับ AI</h2>
+                <p>กำหนดคำแนะนำสำหรับ AI ในการวิเคราะห์ผลลัพธ์จาก SQL</p>
+                <div class="prompt-container">
+                    <textarea id="ai-prompt" rows="15" placeholder="ใส่คำแนะนำสำหรับ AI ที่นี่..."></textarea>
+                </div>
+                <div class="actions">
+                    <button id="save-prompt" class="save-button">บันทึกคำแนะนำ</button>
+                    <button id="reset-prompt" class="reset-button">คืนค่าเริ่มต้น</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Tab switching
+            const tabs = document.querySelectorAll('.tab');
+            tabs.forEach(tab => {
+                tab.addEventListener('click', function() {
+                    // Remove active class from all tabs and tab contents
+                    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                    
+                    // Add active class to clicked tab and corresponding content
+                    this.classList.add('active');
+                    const tabId = this.getAttribute('data-tab');
+                    document.getElementById(tabId).classList.add('active');
+                });
+            });
+
+            // ฟังก์ชันสำหรับเพิ่มข้อความในแชท
+            function addMessage(container, message, isUser, additionalContent = null) {
+                const messageDiv = document.createElement('div');
+                messageDiv.classList.add('message');
+                messageDiv.classList.add(isUser ? 'user-message' : 'bot-message');
+                
+                // สร้างส่วนหลักของข้อความ
+                const messageContent = document.createElement('div');
+                messageContent.classList.add('message-content');
+                messageContent.textContent = message;
+                messageDiv.appendChild(messageContent);
+                
+                // ถ้ามีเนื้อหาเพิ่มเติม (เช่น SQL, ตาราง) ให้เพิ่มเข้าไป
+                if (additionalContent) {
+                    const additionalDiv = document.createElement('div');
+                    additionalDiv.classList.add('additional-content');
+                    
+                    if (additionalContent.type === 'sql') {
+                        const sqlDiv = document.createElement('div');
+                        sqlDiv.classList.add('sql-query');
+                        sqlDiv.textContent = additionalContent.sql;
+                        additionalDiv.appendChild(sqlDiv);
+                    }
+                    
+                    if (additionalContent.type === 'table' && additionalContent.data && additionalContent.data.length > 0) {
+                        const tableDiv = document.createElement('div');
+                        tableDiv.classList.add('table-container');
+                        
+                        const table = document.createElement('table');
+                        table.className = 'result-table';
+                        
+                        // สร้างส่วนหัวตาราง
+                        const thead = document.createElement('thead');
+                        const headerRow = document.createElement('tr');
+                        
+                        // ดึงชื่อคอลัมน์จากข้อมูลแรก
+                        const columns = Object.keys(additionalContent.data[0]);
+                        columns.forEach(column => {
+                            const th = document.createElement('th');
+                            th.textContent = column;
+                            headerRow.appendChild(th);
+                        });
+                        
+                        thead.appendChild(headerRow);
+                        table.appendChild(thead);
+                        
+                        // สร้างส่วนเนื้อหาตาราง
+                        const tbody = document.createElement('tbody');
+                        
+                        additionalContent.data.forEach(row => {
+                            const tr = document.createElement('tr');
+                            
+                            columns.forEach(column => {
+                                const td = document.createElement('td');
+                                td.textContent = row[column];
+                                tr.appendChild(td);
+                            });
+                            
+                            tbody.appendChild(tr);
+                        });
+                        
+                        table.appendChild(tbody);
+                        tableDiv.appendChild(table);
+                        additionalDiv.appendChild(tableDiv);
+                    }
+                    
+                    messageDiv.appendChild(additionalDiv);
+                }
+                
+                container.appendChild(messageDiv);
+                container.scrollTop = container.scrollHeight;
+                
+                // แสดงการพิมพ์แบบ realtime
+                if (!isUser) {
+                    messageContent.classList.add('typing');
+                    const originalText = message;
+                    messageContent.textContent = '';
+                    
+                    let i = 0;
+                    const typingInterval = setInterval(() => {
+                        if (i < originalText.length) {
+                            messageContent.textContent += originalText.charAt(i);
+                            i++;
+                            container.scrollTop = container.scrollHeight;
+                        } else {
+                            clearInterval(typingInterval);
+                            messageContent.classList.remove('typing');
+                        }
+                    }, 10);
+                }
+            }
+
+            // ฟังก์ชันสำหรับแสดงการโหลด
+            function showLoading(container) {
+                const loadingDiv = document.createElement('div');
+                loadingDiv.classList.add('message', 'bot-message', 'loading-message');
+                loadingDiv.innerHTML = '<div class="loading-dots"><span></span><span></span><span></span></div>';
+                container.appendChild(loadingDiv);
+                container.scrollTop = container.scrollHeight;
+                return loadingDiv;
+            }
+
+            // ฟังก์ชันสำหรับซ่อนการโหลด
+            function hideLoading(loadingDiv) {
+                if (loadingDiv && loadingDiv.parentNode) {
+                    loadingDiv.parentNode.removeChild(loadingDiv);
+                }
+            }
+
+            // ฟังก์ชันสำหรับจัดรูปแบบข้อความ
+            function formatMessage(text) {
+                if (!text) return '';
+                
+                // แทนที่การขึ้นบรรทัดใหม่ด้วย <br>
+                let formattedText = text.replace(/\n/g, '<br>');
+                
+                // จัดรูปแบบโค้ด SQL ให้สวยงาม
+                formattedText = formattedText.replace(/คำสั่ง SQL: (.*?)(?=<br>|$)/gs, function(match, sql) {
+                    return `<div class="code-block sql-code"><strong>คำสั่ง SQL:</strong><pre>${sql.trim()}</pre></div>`;
+                });
+                
+                // จัดรูปแบบผลลัพธ์ JSON ให้สวยงาม
+                formattedText = formattedText.replace(/ผลลัพธ์: (.*?)(?=<br>|$)/gs, function(match, json) {
+                    try {
+                        const formattedJson = JSON.stringify(JSON.parse(json), null, 2);
+                        return `<div class="code-block result-code"><strong>ผลลัพธ์:</strong><pre>${formattedJson}</pre></div>`;
+                    } catch (e) {
+                        return `<div class="code-block result-code"><strong>ผลลัพธ์:</strong><pre>${json}</pre></div>`;
+                    }
+                });
+                
+                return formattedText;
+            }
+
+            // ฟังก์ชันสำหรับสร้าง streaming message
+            function createStreamingMessage(container) {
+                const messageElement = document.createElement('div');
+                messageElement.className = 'message bot-message';
+                
+                const contentElement = document.createElement('div');
+                contentElement.className = 'message-content';
+                messageElement.appendChild(contentElement);
+                
+                container.appendChild(messageElement);
+                container.scrollTop = container.scrollHeight;
+                
+                return {
+                    element: messageElement,
+                    update: function(text) {
+                        contentElement.innerHTML = formatMessage(text);
+                        container.scrollTop = container.scrollHeight;
+                    },
+                    appendText: function(text) {
+                        contentElement.innerHTML += formatMessage(text);
+                        container.scrollTop = container.scrollHeight;
+                    },
+                    complete: function() {
+                        messageElement.classList.remove('streaming');
+                    }
+                };
+            }
+
+            // Chat functionality
+            const chatMessages = document.getElementById('chat-messages');
+            const userMessageInput = document.getElementById('user-message');
+            const sendButton = document.getElementById('send-button');
+            const refreshChatButton = document.getElementById('refresh-chat');
+            let conversationHistory = [];
+
+            function sendMessage() {
+                const message = userMessageInput.value.trim();
+                if (message) {
+                    addMessage(chatMessages, message, true);
+                    userMessageInput.value = '';
+                    
+                    // Add user message to conversation history
+                    conversationHistory.push({
+                        role: "user",
+                        content: message
+                    });
+                    
+                    // สร้าง streaming message
+                    const streamingMessage = createStreamingMessage(chatMessages);
+                    
+                    // ใช้ Server-Sent Events (SSE) สำหรับ streaming
+                    const eventSource = new EventSource(`/stream/chat?message=${encodeURIComponent(message)}`);
+                    
+                    let fullResponse = '';
+                    
+                    eventSource.onmessage = function(event) {
+                        const data = JSON.parse(event.data);
+                        
+                        if (data.content) {
+                            fullResponse += data.content;
+                            streamingMessage.update(data.content);
+                        }
+                        
+                        if (data.error) {
+                            streamingMessage.update(data.error);
+                            streamingMessage.complete();
+                            eventSource.close();
+                        }
+                    };
+                    
+                    eventSource.onerror = function() {
+                        streamingMessage.complete();
+                        eventSource.close();
+                        
+                        // Add bot response to conversation history
+                        conversationHistory.push({
+                            role: "assistant",
+                            content: fullResponse
+                        });
+                    };
+                }
+            }
+
+            sendButton.addEventListener('click', sendMessage);
+            userMessageInput.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    sendMessage();
+                }
+            });
+            
+            // เริ่มแชทใหม่
+            refreshChatButton.addEventListener('click', function() {
+                chatMessages.innerHTML = '';
+                conversationHistory = [];
+                addMessage(chatMessages, 'สวัสดีครับ! ฉันเป็น AI Chat Bot ที่พร้อมจะช่วยคุณ คุณมีคำถามอะไรไหมครับ?', false);
+            });
+            
+            // แสดงข้อความต้อนรับเมื่อโหลดหน้า
+            addMessage(chatMessages, 'สวัสดีครับ! ฉันเป็น AI Chat Bot ที่พร้อมจะช่วยคุณ คุณมีคำถามอะไรไหมครับ?', false);
+
+            // SQL Query functionality
+            const sqlMessages = document.getElementById('sql-messages');
+            const sqlQuestion = document.getElementById('sql-question');
+            const sqlButton = document.getElementById('sql-button');
+            const refreshSqlButton = document.getElementById('refresh-sql');
+            let sqlHistory = [];
+
+            sqlButton.addEventListener('click', function() {
+                const question = sqlQuestion.value.trim();
+                
+                if (question) {
+                    addMessage(sqlMessages, question, true);
+                    sqlQuestion.value = '';
+                    
+                    // สร้าง streaming message สำหรับการวิเคราะห์
+                    const streamingMessage = createStreamingMessage(sqlMessages);
+                    
+                    // ใช้ fetch API สำหรับ POST request
+                    fetch('/stream/sql-query', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            question: question
+                        })
+                    })
+                    .then(response => {
+                        const reader = response.body.getReader();
+                        const decoder = new TextDecoder();
+                        
+                        let sql_query = '';
+                        let result = [];
+                        let analysis = '';
+                        
+                        function read() {
+                            return reader.read().then(({ done, value }) => {
+                                if (done) {
+                                    streamingMessage.complete();
+                                    return;
+                                }
+                                
+                                const chunk = decoder.decode(value, { stream: true });
+                                const lines = chunk.split('\n\n');
+                                
+                                lines.forEach(line => {
+                                    if (line.startsWith('data:')) {
+                                        const data = JSON.parse(line.substring(5).trim());
+                                        
+                                        if (data.status === 'generating_sql') {
+                                            streamingMessage.update('กำลังสร้างคำสั่ง SQL...\n');
+                                        } else if (data.status === 'executing_sql') {
+                                            streamingMessage.update('กำลังรันคำสั่ง SQL...\n');
+                                        } else if (data.status === 'analyzing_result') {
+                                            streamingMessage.update('กำลังวิเคราะห์ผลลัพธ์...\n');
+                                        } else if (data.sql_query) {
+                                            sql_query = data.sql_query;
+                                            streamingMessage.update(`คำสั่ง SQL: ${sql_query}\n\n`);
+                                        } else if (data.result) {
+                                            result = data.result;
+                                            streamingMessage.update(`ผลลัพธ์: ${JSON.stringify(result, null, 2)}\n\n`);
+                                        } else if (data.analysis) {
+                                            analysis += data.analysis;
+                                            console.log("ได้รับการวิเคราะห์:", data.analysis);
+                                            streamingMessage.update(data.analysis);
+                                        } else if (data.analysis_start) {
+                                            streamingMessage.update('เริ่มการวิเคราะห์ผลลัพธ์...\n\n');
+                                            // เริ่มต้นการวิเคราะห์ใหม่
+                                            analysis = '';
+                                        } else if (data.analysis_chunk) {
+                                            // เพิ่มข้อความวิเคราะห์ทีละส่วน
+                                            analysis += data.analysis_chunk;
+                                            streamingMessage.appendText(data.analysis_chunk);
+                                        } else if (data.analysis_complete) {
+                                            // การวิเคราะห์เสร็จสิ้น
+                                            console.log("การวิเคราะห์เสร็จสิ้น");
+                                        } else if (data.analysis_error) {
+                                            streamingMessage.update('เกิดข้อผิดพลาดในการวิเคราะห์: ' + data.analysis_error);
+                                        } else if (data.error) {
+                                            streamingMessage.update('เกิดข้อผิดพลาด: ' + data.error);
+                                        }
+                                    }
+                                });
+                                
+                                return read();
+                            });
+                        }
+                        
+                        return read().then(() => {
+                            // เมื่อเสร็จสิ้นการอ่านข้อมูลทั้งหมด
+                            streamingMessage.element.remove();
+                            
+                            // แสดงผลลัพธ์ทั้งหมด
+                            const additionalContent = {
+                                type: 'sql',
+                                sql: sql_query
+                            };
+                            
+                            // ตรวจสอบว่าผลลัพธ์มีแค่ตัวเลขเดียวหรือไม่
+                            let isSingleNumericResult = false;
+                            if (Array.isArray(result) && result.length === 1) {
+                                const firstRow = result[0];
+                                const keys = Object.keys(firstRow);
+                                if (keys.length === 1) {
+                                    const value = firstRow[keys[0]];
+                                    if (typeof value === 'number' || !isNaN(Number(value))) {
+                                        isSingleNumericResult = true;
+                                        console.log("พบผลลัพธ์เป็นตัวเลขเดียว:", value);
+                                    }
+                                }
+                            }
+                            
+                            // ถ้ามีผลลัพธ์และเป็นตาราง และไม่ใช่ตัวเลขเดียว ให้แสดงตาราง
+                            if (Array.isArray(result) && result.length > 0 && !isSingleNumericResult) {
+                                additionalContent.type = 'table';
+                                additionalContent.data = result;
+                                console.log("แสดงผลลัพธ์เป็นตาราง");
+                            } else {
+                                console.log("ไม่แสดงตาราง เนื่องจากเป็นตัวเลขเดียวหรือไม่มีข้อมูล");
+                            }
+                            
+                            // แสดงการวิเคราะห์จาก AI
+                            if (analysis) {
+                                console.log("แสดงการวิเคราะห์:", analysis.substring(0, 50) + "...");
+                                addMessage(sqlMessages, analysis, false, additionalContent);
+                            } else {
+                                console.log("ไม่มีการวิเคราะห์จาก AI");
+                                addMessage(sqlMessages, "ขออภัย ไม่สามารถวิเคราะห์ผลลัพธ์ได้ในขณะนี้", false, additionalContent);
+                            }
+                            
+                            // เก็บประวัติการค้นหา
+                            sqlHistory.push({
+                                question: question,
+                                sql_query: sql_query,
+                                result: result,
+                                analysis: analysis
+                            });
+                        });
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                        streamingMessage.update('เกิดข้อผิดพลาดในการเชื่อมต่อกับเซิร์ฟเวอร์');
+                        streamingMessage.complete();
+                    });
+                }
+            });
+            
+            // เริ่มค้นหาใหม่
+            refreshSqlButton.addEventListener('click', function() {
+                sqlMessages.innerHTML = '';
+                sqlHistory = [];
+                addMessage(sqlMessages, 'คุณสามารถถามคำถามเพื่อสร้างคำสั่ง SQL ได้ที่นี่', false);
+            });
+            
+            // แสดงข้อความต้อนรับเมื่อโหลดหน้า
+            addMessage(sqlMessages, 'คุณสามารถถามคำถามเพื่อสร้างคำสั่ง SQL ได้ที่นี่', false);
+
+            // Settings functionality
+            const aiPromptTextarea = document.getElementById('ai-prompt');
+            const savePromptButton = document.getElementById('save-prompt');
+            const resetPromptButton = document.getElementById('reset-prompt');
+            let defaultPrompt = '';
+
+            // โหลดคำแนะนำเมื่อเปิดแท็บตั้งค่า
+            document.querySelector('.tab[data-tab="settings"]').addEventListener('click', function() {
+                fetch('/api/prompt')
+                    .then(response => response.json())
+                    .then(data => {
+                        aiPromptTextarea.value = data.prompt;
+                        defaultPrompt = data.prompt;
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                        alert('ไม่สามารถโหลดคำแนะนำได้');
+                    });
+            });
+
+            // บันทึกคำแนะนำ
+            savePromptButton.addEventListener('click', function() {
+                const prompt = aiPromptTextarea.value.trim();
+                if (prompt) {
+                    fetch('/api/prompt', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            prompt: prompt
+                        })
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            alert('บันทึกคำแนะนำสำเร็จ');
+                        } else {
+                            alert('เกิดข้อผิดพลาดในการบันทึกคำแนะนำ');
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                        alert('เกิดข้อผิดพลาดในการบันทึกคำแนะนำ');
+                    });
+                } else {
+                    alert('กรุณาใส่คำแนะนำก่อนบันทึก');
+                }
+            });
+
+            // คืนค่าเริ่มต้น
+            resetPromptButton.addEventListener('click', function() {
+                aiPromptTextarea.value = defaultPrompt;
+            });
+        });
+    </script>
+</body>
+</html> 
